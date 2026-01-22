@@ -11,14 +11,50 @@ import java.util.concurrent.Executor;
 @EnableAsync
 public class AsyncConfig {
 
-    @Bean("asyncExecutor") // @Async("asyncExecutor") 등으로 비동기 메서드에서 사용할 Executor 지정
-    public Executor asyncExecutor() { // Executor -> 스레드 실행을 담당하는 인터페이스. 내부 구현은 ThreadPoolTaskExecutor
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor(); // Spring에서 제공하는 스레드 풀 Executor 구현체, @Async, @Scheduled 등과 잘 연동됨
-        executor.setCorePoolSize(3); // 기본으로 유지되는 스레드 수
-        executor.setMaxPoolSize(5); // 최대 생성 가능한 스레드 수
-        executor.setQueueCapacity(10); // 작업 대기 큐의 크기, 큐가 가득 차면 → 스레드 5개까지 증가, 그래도 넘치면 → RejectedExecutionException 발생
-        executor.setThreadNamePrefix("ASYNC-"); // 스레드명 Prefix, 예) ASYNC-1
-        executor.initialize(); // 스레드풀 초기화, 빈 생성 전 반드시 필요
+    /**
+     * AbortPolicy (기본)
+     * - 큐가 가득 차면 RejectedExecutionException 발생
+     */
+    @Bean("defaultAbortExecutor")
+    public Executor defaultAbortExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(3);
+        executor.setMaxPoolSize(5);
+        executor.setQueueCapacity(10);
+        executor.setThreadNamePrefix("ABORT-");
+        executor.initialize();
+        return executor;
+    }
+
+    /**
+     * CallerRunsPolicy
+     * - 큐가 가득 차면 호출 스레드가 직접 실행 (블로킹)
+     */
+    @Bean("callerRunsExecutor")
+    public Executor callerRunsExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(3);
+        executor.setMaxPoolSize(5);
+        executor.setQueueCapacity(10);
+        executor.setThreadNamePrefix("CALLER-RUNS-");
+        executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
+        executor.initialize();
+        return executor;
+    }
+
+    /**
+     * DiscardPolicy
+     * - 큐가 가득 차면 태스크를 조용히 버림
+     */
+    @Bean("discardExecutor")
+    public Executor discardExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(3);
+        executor.setMaxPoolSize(5);
+        executor.setQueueCapacity(10);
+        executor.setThreadNamePrefix("DISCARD-");
+        executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.DiscardPolicy());
+        executor.initialize();
         return executor;
     }
 }

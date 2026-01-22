@@ -15,15 +15,43 @@ public class AsyncService {
 
     private final AsyncTaskLogRepository repository;
 
-    @Async("asyncExecutor")
+    /**
+     * AbortPolicy (기본)
+     * - 큐가 가득 차면 RejectedExecutionException 발생
+     */
+    @Async("defaultAbortExecutor")
     @Transactional
-    public void process(int taskId) {
-        log.info("start process {}", taskId);
-
+    public void processDefault(int taskId) {
+        log.info("[ABORT] start {}", taskId);
         sleep(2000);
+        repository.save(new AsyncTaskLog("ASYNC-ABORT", taskId));
+        log.info("[ABORT] end {}", taskId);
+    }
 
-        repository.save(new AsyncTaskLog("ASYNC", taskId));
-        log.info("end process {}", taskId);
+    /**
+     * CallerRunsPolicy
+     * - 큐가 가득 차면 호출 스레드가 직접 실행
+     */
+    @Async("callerRunsExecutor")
+    @Transactional
+    public void processCallerRuns(int taskId) {
+        log.info("[CALLER-RUNS] start {}", taskId);
+        sleep(2000);
+        repository.save(new AsyncTaskLog("ASYNC-CALLER-RUNS", taskId));
+        log.info("[CALLER-RUNS] end {}", taskId);
+    }
+
+    /**
+     * DiscardPolicy
+     * - 큐가 가득 차면 태스크를 조용히 버림
+     */
+    @Async("discardExecutor")
+    @Transactional
+    public void processDiscard(int taskId) {
+        log.info("[DISCARD] start {}", taskId);
+        sleep(2000);
+        repository.save(new AsyncTaskLog("ASYNC-DISCARD", taskId));
+        log.info("[DISCARD] end {}", taskId);
     }
 
     private void sleep(long millis) {
