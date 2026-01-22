@@ -29,13 +29,29 @@ public class QueueWorker {
         }
     }
 
-    public void submit(QueueTask task) {
+    /**
+     * 블로킹 방식: 큐가 가득 차면 대기
+     */
+    public void submitWithPut(QueueTask task) {
         try {
             queue.put(task);
-            log.info("[QUEUE] submit {}", task.taskId());
+            log.info("[QUEUE-PUT] submit {}", task.taskId());
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /**
+     * 논블로킹 방식: 큐가 가득 차면 즉시 false 반환
+     */
+    public boolean submitWithOffer(QueueTask task) {
+        boolean added = queue.offer(task);
+        if (added) {
+            log.info("[QUEUE-OFFER] submit 성공 {}", task.taskId());
+        } else {
+            log.warn("[QUEUE-OFFER] submit 실패 (큐 가득 참) {}", task.taskId());
+        }
+        return added;
     }
 
     public void consume() {
