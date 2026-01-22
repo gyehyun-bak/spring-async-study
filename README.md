@@ -443,3 +443,290 @@ public class QueueController {
 ---
 
 # (추가) 작업 유실이 없는 완전 논블로킹
+
+앞선 방식들은 **논블로킹이면 작업 유실**, **작업 유실이 없으면 블로킹**이라는 트레이드오프가 있었다. 이 섹션에서는 **논블로킹이면서 작업 유실이 없는** 완전 비동기 방식들을 비교한다.
+
+| 방식 | 논블로킹 | 작업 유실 없음 | 비고 |
+| --- | --- | --- | --- |
+| `@Async` + 무제한 큐 | O | O | 메모리 주의 |
+| `CompletableFuture` | O | O | 체이닝 가능 |
+| Virtual Thread (Java 21+) | O | O | 경량 스레드 |
+| `@Async` + Virtual Thread | O | O | 스프링 통합 |
+
+## Executor 빈 등록
+
+```java
+@Configuration
+public class NonBlockingConfig {
+
+    /**
+     * 무제한 큐 Executor
+     * - queueCapacity를 매우 크게 설정하여 거부 없이 모든 작업 수용
+     * - 메모리 주의 필요
+     */
+    @Bean("unboundedQueueExecutor")
+    public Executor unboundedQueueExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(5);
+        executor.setMaxPoolSize(5);
+        executor.setQueueCapacity(Integer.MAX_VALUE); // 무제한 큐
+        executor.setThreadNamePrefix("UNBOUNDED-");
+        executor.initialize();
+        return executor;
+    }
+
+    /**
+     * Virtual Thread Executor (Java 21+)
+     * - 경량 스레드로 대량의 동시 작업 처리
+     */
+    @Bean("virtualThreadExecutor")
+    public Executor virtualThreadExecutor() {
+        return Executors.newVirtualThreadPerTaskExecutor();
+    }
+
+    /**
+     * Fixed Thread Pool
+     * - CompletableFuture용 고정 스레드 풀
+     */
+    @Bean("fixedThreadPoolExecutor")
+    public Executor fixedThreadPoolExecutor() {
+        return Executors.newFixedThreadPool(10);
+    }
+}
+```
+
+## NonBlockingService
+
+```java
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class NonBlockingService {
+
+    private final AsyncTaskLogRepository repository;
+    private final Executor fixedThreadPoolExecutor;
+    private final Executor virtualThreadExecutor;
+
+    /**
+     * 방식 1: @Async + 무제한 큐
+     * - 스프링 @Async 사용
+     * - 큐가 무제한이므로 거부 없음
+     */
+    @Async("unboundedQueueExecutor")
+    @Transactional
+    public void processWithUnboundedQueue(int taskId) {
+        log.info("[UNBOUNDED-QUEUE] start {}", taskId);
+        sleep(2000);
+        repository.save(new AsyncTaskLog("UNBOUNDED-QUEUE", taskId));
+        log.info("[UNBOUNDED-QUEUE] end {}", taskId);
+    }
+
+    /**
+     * 방식 2: CompletableFuture + Fixed Thread Pool
+     * - 직접 CompletableFuture로 비동기 실행
+     * - 즉시 반환
+     */
+    public CompletableFuture<Void> processWithCompletableFuture(int taskId) {
+        return CompletableFuture.runAsync(() -> {
+            log.info("[COMPLETABLE-FUTURE] start {}", taskId);
+            sleep(2000);
+            saveLog("COMPLETABLE-FUTURE", taskId);
+            log.info("[COMPLETABLE-FUTURE] end {}", taskId);
+        }, fixedThreadPoolExecutor);
+    }
+
+    /**
+     * 방식 3: Virtual Thread (Java 21+)
+     * - 경량 가상 스레드 사용
+     * - 대량의 동시 작업에 적합
+     */
+    public CompletableFuture<Void> processWithVirtualThread(int taskId) {
+        return CompletableFuture.runAsync(() -> {
+            log.info("[VIRTUAL-THREAD] start {}", taskId);
+            sleep(2000);
+            saveLog("VIRTUAL-THREAD", taskId);
+            log.info("[VIRTUAL-THREAD] end {}", taskId);
+        }, virtualThreadExecutor);
+    }
+
+    /**
+     * 방식 4: @Async + Virtual Thread
+     * - 스프링 @Async와 Virtual Thread 조합
+     */
+    @Async("virtualThreadExecutor")
+    @Transactional
+    public void processAsyncWithVirtualThread(int taskId) {
+        log.info("[ASYNC-VIRTUAL] start {}", taskId);
+        sleep(2000);
+        repository.save(new AsyncTaskLog("ASYNC-VIRTUAL", taskId));
+        log.info("[ASYNC-VIRTUAL] end {}", taskId);
+    }
+
+    @Transactional
+    public void saveLog(String type, int taskId) {
+        repository.save(new AsyncTaskLog(type, taskId));
+    }
+
+    private void sleep(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+}
+```
+
+## NonBlocking 요청 컨트롤러
+
+```java
+@RestController
+@RequestMapping("/non-blocking")
+@RequiredArgsConstructor
+public class NonBlockingController {
+
+    private final NonBlockingService service;
+
+    /**
+     * 방식 1: @Async + 무제한 큐
+     * - 모든 작업이 큐에 들어감 (거부 없음)
+     * - 즉시 응답
+     */
+    @GetMapping("/unbounded-queue")
+    public String unboundedQueue() {
+        long start = System.currentTimeMillis();
+
+        for (int i = 0; i < 100; i++) {
+            service.processWithUnboundedQueue(i);
+        }
+
+        long elapsed = System.currentTimeMillis() - start;
+        return String.format("[무제한 큐 + @Async] 즉시 응답 - 소요시간: %dms, 100개 작업 큐에 추가됨", elapsed);
+    }
+
+    /**
+     * 방식 2: CompletableFuture
+     * - 직접 비동기 실행
+     * - 즉시 응답
+     */
+    @GetMapping("/completable-future")
+    public String completableFuture() {
+        long start = System.currentTimeMillis();
+
+        for (int i = 0; i < 100; i++) {
+            service.processWithCompletableFuture(i);
+        }
+
+        long elapsed = System.currentTimeMillis() - start;
+        return String.format("[CompletableFuture] 즉시 응답 - 소요시간: %dms, 100개 작업 실행 중", elapsed);
+    }
+
+    /**
+     * 방식 3: Virtual Thread (Java 21+)
+     * - 경량 가상 스레드로 대량 동시 처리
+     * - 즉시 응답
+     */
+    @GetMapping("/virtual-thread")
+    public String virtualThread() {
+        long start = System.currentTimeMillis();
+
+        for (int i = 0; i < 100; i++) {
+            service.processWithVirtualThread(i);
+        }
+
+        long elapsed = System.currentTimeMillis() - start;
+        return String.format("[Virtual Thread] 즉시 응답 - 소요시간: %dms, 100개 가상 스레드 실행 중", elapsed);
+    }
+
+    /**
+     * 방식 4: @Async + Virtual Thread
+     * - 스프링 @Async와 Virtual Thread 조합
+     * - 즉시 응답
+     */
+    @GetMapping("/async-virtual")
+    public String asyncVirtual() {
+        long start = System.currentTimeMillis();
+
+        for (int i = 0; i < 100; i++) {
+            service.processAsyncWithVirtualThread(i);
+        }
+
+        long elapsed = System.currentTimeMillis() - start;
+        return String.format("[@Async + Virtual Thread] 즉시 응답 - 소요시간: %dms, 100개 작업 실행 중", elapsed);
+    }
+}
+```
+
+## 실행 결과
+
+### 방식 1: `@Async` + 무제한 큐
+
+<!-- TODO: 스크린샷 - /non-blocking/unbounded-queue 호출 결과 (즉시 응답, 소요시간 수 ms) -->
+
+호출 결과
+
+<!-- TODO: 스크린샷 - DB 저장 결과 (100개 모두 저장됨, UNBOUNDED-QUEUE 타입) -->
+
+저장 결과
+
+- 즉시 응답 (수 ms)
+- 100개 작업 모두 큐에 적재 후 순차 처리
+- 메모리 사용량 주의 필요
+
+### 방식 2: `CompletableFuture`
+
+<!-- TODO: 스크린샷 - /non-blocking/completable-future 호출 결과 -->
+
+호출 결과
+
+<!-- TODO: 스크린샷 - DB 저장 결과 (100개 모두 저장됨, COMPLETABLE-FUTURE 타입) -->
+
+저장 결과
+
+- 즉시 응답 (수 ms)
+- 10개 스레드 풀에서 병렬 처리
+- `thenApply`, `thenCompose` 등 체이닝 가능
+
+### 방식 3: Virtual Thread (Java 21+)
+
+<!-- TODO: 스크린샷 - /non-blocking/virtual-thread 호출 결과 -->
+
+호출 결과
+
+<!-- TODO: 스크린샷 - DB 저장 결과 (100개 모두 저장됨, VIRTUAL-THREAD 타입) -->
+
+저장 결과
+
+- 즉시 응답 (수 ms)
+- 100개 가상 스레드가 동시에 실행
+- 플랫폼 스레드 대비 매우 경량 (수백만 개 생성 가능)
+
+### 방식 4: `@Async` + Virtual Thread
+
+<!-- TODO: 스크린샷 - /non-blocking/async-virtual 호출 결과 -->
+
+호출 결과
+
+<!-- TODO: 스크린샷 - DB 저장 결과 (100개 모두 저장됨, ASYNC-VIRTUAL 타입) -->
+
+저장 결과
+
+- 즉시 응답 (수 ms)
+- 스프링 `@Async`와 Virtual Thread의 장점 결합
+- `@Transactional` 등 스프링 기능과 자연스럽게 통합
+
+## 방식별 비교
+
+| 구분 | 무제한 큐 | CompletableFuture | Virtual Thread | @Async + Virtual |
+| --- | --- | --- | --- | --- |
+| 즉시 응답 | O | O | O | O |
+| 작업 유실 | X | X | X | X |
+| 동시 실행 수 | 스레드 풀 크기 | 스레드 풀 크기 | 무제한 | 무제한 |
+| 메모리 효율 | 낮음 (큐 적재) | 보통 | 높음 | 높음 |
+| 체이닝/조합 | X | O | O | X |
+| 스프링 통합 | O | △ | △ | O |
+| Java 버전 | 8+ | 8+ | 21+ | 21+ |
+
+### 결론
+
+> **완전 논블로킹 + 작업 유실 없음**을 달성하려면 **무제한 큐** 또는 **Virtual Thread**를 활용해야 한다. Java 21 이상이라면 **Virtual Thread**가 메모리 효율과 동시성 측면에서 가장 우수하다.
