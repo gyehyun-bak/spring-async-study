@@ -730,3 +730,70 @@ public class NonBlockingController {
 ### 결론
 
 > **완전 논블로킹 + 작업 유실 없음**을 달성하려면 **무제한 큐** 또는 **Virtual Thread**를 활용해야 한다. Java 21 이상이라면 **Virtual Thread**가 메모리 효율과 동시성 측면에서 가장 우수하다.
+
+---
+
+# (참고) Reactive Programming & WebFlux
+
+> 이 문서에서 다룬 방식들은 모두 **서블릿 기반 Spring MVC** 위에서 동작한다. 완전한 논블로킹 I/O를 원한다면 **Spring WebFlux**를 고려할 수 있다.
+
+## Spring MVC vs Spring WebFlux
+
+| 구분 | Spring MVC | Spring WebFlux |
+| --- | --- | --- |
+| 기반 | 서블릿 (Blocking I/O) | Netty (Non-Blocking I/O) |
+| 스레드 모델 | 요청당 스레드 | 이벤트 루프 (소수의 스레드) |
+| 프로그래밍 모델 | 명령형 (Imperative) | 반응형 (Reactive) |
+| 반환 타입 | `String`, `ResponseEntity` 등 | `Mono<T>`, `Flux<T>` |
+| 적합한 상황 | 전통적인 CRUD, 블로킹 DB | 대량 동시 연결, 스트리밍 |
+
+## WebFlux 예시 (참고용)
+
+```java
+@RestController
+@RequestMapping("/reactive")
+public class ReactiveController {
+
+    @GetMapping("/mono")
+    public Mono<String> mono() {
+        return Mono.fromCallable(() -> {
+            // 비동기 작업
+            Thread.sleep(2000);
+            return "작업 완료";
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    @GetMapping("/flux")
+    public Flux<Integer> flux() {
+        return Flux.range(1, 100)
+                .delayElements(Duration.ofMillis(100))
+                .map(i -> i * 2);
+    }
+}
+```
+
+## 핵심 개념
+
+- **`Mono<T>`**: 0 또는 1개의 결과를 비동기로 반환
+- **`Flux<T>`**: 0 ~ N개의 결과를 스트림으로 반환
+- **Backpressure**: 소비자가 처리할 수 있는 만큼만 데이터를 요청
+
+## 언제 WebFlux를 선택할까?
+
+| 상황 | 권장 |
+| --- | --- |
+| 전통적인 CRUD 애플리케이션 | Spring MVC |
+| JDBC/JPA 사용 (블로킹 DB) | Spring MVC (+ Virtual Thread) |
+| 대량의 동시 연결 (채팅, 알림) | WebFlux |
+| 외부 API 다수 호출 | WebFlux |
+| 실시간 스트리밍 | WebFlux |
+| 팀의 Reactive 경험 부족 | Spring MVC |
+
+## 주의사항
+
+- WebFlux는 **학습 곡선이 가파름** (디버깅, 에러 처리 등)
+- **블로킹 코드가 섞이면 성능 저하** (JDBC, `Thread.sleep()` 등)
+- R2DBC, WebClient 등 **논블로킹 라이브러리 필요**
+- Java 21의 Virtual Thread가 등장하면서 **MVC + Virtual Thread**가 대안으로 부상
+
+> **결론**: 대부분의 경우 **Spring MVC + Virtual Thread**로 충분하다. WebFlux는 대량 동시 연결이나 스트리밍이 핵심인 경우에 고려한다.
