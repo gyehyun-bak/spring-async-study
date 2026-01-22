@@ -1,4 +1,4 @@
-package com.example.spring_async_study;
+package com.example.spring_async_study.async;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

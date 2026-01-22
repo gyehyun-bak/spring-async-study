@@ -1,5 +1,7 @@
-package com.example.spring_async_study;
+package com.example.spring_async_study.async;
 
+import com.example.spring_async_study.AsyncTaskLog;
+import com.example.spring_async_study.AsyncTaskLogRepository;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

@@ -1,4 +1,4 @@
-package com.example.spring_async_study;
+package com.example.spring_async_study.async;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
